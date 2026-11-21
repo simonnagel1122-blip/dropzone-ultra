@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<style>
+*{box-sizing:border-box}html,body{margin:0;overflow:hidden;background:#14251b;color:white;font-family:Arial;touch-action:none}canvas{display:block;width:100vw;height:100vh;touch-action:none}
+#hud{position:fixed;top:10px;left:10px;background:#111c;padding:12px;border-radius:10px;line-height:1.6;pointer-events:none;z-index:3}
+#settings{position:fixed;top:10px;right:10px;background:#111d;padding:12px;z-index:3}#settings select,#settings button{padding:7px;margin:4px}
+#help{position:fixed;bottom:10px;left:10px;background:#111b;padding:10px;border-radius:8px;font-size:13px;line-height:1.5;z-index:3}
+#message{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);font-size:32px;font-weight:bold;text-align:center;pointer-events:none;z-index:4}
+#touchLayer{display:none;position:fixed;inset:0;z-index:2;pointer-events:none}
+.touchPad{position:absolute;width:130px;height:130px;border-radius:50%;background:#ffffff22;border:2px solid #ffffff66;pointer-events:auto;touch-action:none;user-select:none;-webkit-user-select:none}
+.touchPad .nub{position:absolute;width:54px;height:54px;border-radius:50%;background:#ffffff66;border:2px solid #ffffff99;left:50%;top:50%;transform:translate(-50%,-50%);pointer-events:none}
+#movePad{left:22px;bottom:24px}
+.touchButton{position:absolute;pointer-events:auto;touch-action:none;user-select:none;-webkit-user-select:none;border:2px solid #ffffff88;background:#111c;color:white;border-radius:50%;width:68px;height:68px;font-weight:bold;font-size:14px}
+#fireBtn{right:24px;bottom:24px;width:130px;height:130px;background:#e94b4b44;border-radius:50%;font-size:16px}#fireBtn .nub{position:absolute;width:54px;height:54px;border-radius:50%;background:#ffaaaa88;border:2px solid #ffffffaa;left:50%;top:50%;transform:translate(-50%,-50%);pointer-events:none}#reloadBtn{right:24px;bottom:175px}#healBtn{right:100px;bottom:175px;background:#2cae6688}
+@media(max-width:700px){#hud{font-size:12px;padding:8px;top:6px;left:6px}#settings{top:6px;right:6px;padding:6px;font-size:12px}#settings select,#settings button{padding:5px;margin:2px}#help{display:none}#touchLayer.active{display:block}#message{font-size:24px}}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"><b>DROPZONE ULTRA</b><br>HP: <span id="hp">100</span><br>Ammo: <span id="ammo">30</span><br>Kills: <span id="kills">0</span><br>FPS: <span id="fps">0</span><br>Ping: <span id="ping">--</span> ms<br>Bots: <span id="botcount">50</span><br>Controller: <span id="controller">Zoeken...</span></div>
+<div id="settings">FPS LIMIT<br><select id="limit"><option value="60">60</option><option value="120">120</option><option value="144">144</option><option value="165">165</option><option value="240">240</option><option value="360">360</option><option value="0" selected>Unlimited</option></select><br><button onclick="resetGame()">Restart</button></div>
+<div id="help">WASD: bewegen | Muis: richten en schieten | R: reload<br>Controller: linker stick bewegen | rechter stick richten<br>RT: schieten | X: reload | LB: healen</div>
+<div id="touchLayer"><div id="movePad" class="touchPad"><div class="nub"></div></div><button id="fireBtn" class="touchButton"><span class="nub"></span>FIRE</button><button id="reloadBtn" class="touchButton">RELOAD</button><button id="healBtn" class="touchButton">HEAL</button></div>
+<div id="message"></div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d',{alpha:false});let W,H,DPR=1;
+function resize(){W=innerWidth;H=innerHeight;DPR=Math.min(devicePixelRatio||1,2);c.width=W*DPR;c.height=H*DPR;ctx.setTransform(DPR,0,0,DPR,0,0)}window.addEventListener('resize',resize);resize();
+let keys={},mouse={x:W/2,y:H/2,down:false};window.addEventListener('keydown',e=>keys[e.key.toLowerCase()]=true);window.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+c.addEventListener('mousemove',e=>{mouse.x=e.clientX;mouse.y=e.clientY});c.addEventListener('mousedown',()=>mouse.down=true);window.addEventListener('mouseup',()=>mouse.down=false);
+let player,bots,bullets,loot,storm,score,alive,aimAngle=0,lastShot=0,reloadTimer=0,healCooldown=0,fps=0,frames=0,ping=15,previousTime=performance.now(),lastRender=0,fpsClock=performance.now(),previousButtons=[],spawnClock=0;
+const rand=(a,b)=>a+Math.random()*(b-a);
+// Touch controls are shown on touch-capable screens and activated when touch is used.
+const touchLayer=document.getElementById('touchLayer');let touchMode=('ontouchstart' in window)||navigator.maxTouchPoints>0;let moveVec={x:0,y:0},aimVec={x:0,y:0},touchFire=false;
+if(touchMode)touchLayer.classList.add('active');
+function enableTouchUI(){touchMode=true;touchLayer.classList.add('active')}
+window.addEventListener('touchstart',enableTouchUI,{passive:true});
+function attachPad(id,vec,isAim){const pad=document.getElementById(id),nub=pad.querySelector('.nub');let activeId=null;function update(e){const r=pad.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;let dx=e.clientX-cx,dy=e.clientY-cy,max=46,l=Math.hypot(dx,dy);if(l>max){dx=dx/l*max;dy=dy/l*max}vec.x=dx/max;vec.y=dy/max;nub.style.left=(50+dx/r.width*100)+'%';nub.style.top=(50+dy/r.height*100)+'%';if(isAim&&l>8)aimAngle=Math.atan2(vec.y,vec.x)}function reset(){vec.x=0;vec.y=0;nub.style.left='50%';nub.style.top='50%'}pad.addEventListener('pointerdown',e=>{enableTouchUI();activeId=e.pointerId;pad.setPointerCapture(e.pointerId);update(e);e.preventDefault()});pad.addEventListener('pointermove',e=>{if(e.pointerId===activeId)update(e)});pad.addEventListener('pointerup',e=>{if(e.pointerId===activeId){activeId=null;reset()}});pad.addEventListener('pointercancel',()=>{activeId=null;reset()})}
+attachPad('movePad',moveVec,false);
+// The FIRE control is also a drag-to-aim joystick: hold and drag to aim while firing.
+const fireEl=document.getElementById('fireBtn'),fireNub=fireEl.querySelector('.nub');let firePointer=null;
+function updateFireAim(e){const r=fireEl.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;let dx=e.clientX-cx,dy=e.clientY-cy,max=48,l=Math.hypot(dx,dy);if(l>max){dx=dx/l*max;dy=dy/l*max}fireNub.style.left=(50+dx/r.width*100)+'%';fireNub.style.top=(50+dy/r.height*100)+'%';if(l>7)aimAngle=Math.atan2(dy,dx)}
+fireEl.addEventListener('pointerdown',e=>{enableTouchUI();firePointer=e.pointerId;fireEl.setPointerCapture(e.pointerId);touchFire=true;updateFireAim(e);e.preventDefault()});fireEl.addEventListener('pointermove',e=>{if(e.pointerId===firePointer)updateFireAim(e)});function releaseFire(){firePointer=null;touchFire=false;fireNub.style.left='50%';fireNub.style.top='50%'}fireEl.addEventListener('pointerup',e=>{if(e.pointerId===firePointer)releaseFire()});fireEl.addEventListener('pointercancel',releaseFire);
+function bindButton(id,downFn,upFn){const el=document.getElementById(id);el.addEventListener('pointerdown',e=>{enableTouchUI();el.setPointerCapture(e.pointerId);downFn();e.preventDefault()});el.addEventListener('pointerup',e=>{if(upFn)upFn()});el.addEventListener('pointercancel',()=>{if(upFn)upFn()})}
+bindButton('reloadBtn',reload);bindButton('healBtn',heal);
+function spawnBot(){let angle=rand(0,Math.PI*2),distance=rand(600,1800);return{x:player.x+Math.cos(angle)*distance,y:player.y+Math.sin(angle)*distance,hp:100,speed:rand(1.2,2.1),cool:rand(40,100)}}
+function resetGame(){player={x:0,y:0,hp:100,ammo:30,maxAmmo:30,speed:5};bots=[];bullets=[];loot=[];storm=2500;score=0;alive=true;reloadTimer=0;healCooldown=0;lastShot=0;aimAngle=0;spawnClock=0;previousButtons=[];for(let i=0;i<50;i++)bots.push(spawnBot());for(let i=0;i<120;i++)loot.push({x:rand(-3000,3000),y:rand(-3000,3000),type:i%2})}
+function reload(){if(alive&&player.ammo<player.maxAmmo&&reloadTimer<=0)reloadTimer=1.1}function heal(){if(alive&&healCooldown<=0&&player.hp<100){player.hp=Math.min(100,player.hp+40);healCooldown=8}}
+function shoot(){if(!alive||reloadTimer>0)return;if(player.ammo<=0){reload();return}if(performance.now()-lastShot<110)return;lastShot=performance.now();player.ammo--;bullets.push({x:player.x,y:player.y,vx:Math.cos(aimAngle)*16,vy:Math.sin(aimAngle)*16,life:80,enemy:false})}
+function getPad(){let pads=navigator.getGamepads?navigator.getGamepads():[];for(let p of pads)if(p&&p.connected)return p;return null}function pressed(p,i){return !!(p.buttons[i]&&p.buttons[i].pressed)}
+function update(dt){if(!alive)return;dt=Math.min(dt,50)/16.6667;let mx=0,my=0,pad=getPad(),shooting=mouse.down||touchFire;
+if(touchMode){mx+=moveVec.x;my+=moveVec.y}
+if(pad){document.getElementById('controller').textContent='Verbonden';let ax=pad.axes[0]||0,ay=pad.axes[1]||0,rx=pad.axes[2]||0,ry=pad.axes[3]||0;if(Math.abs(ax)>.15)mx=ax;if(Math.abs(ay)>.15)my=ay;if(Math.abs(rx)>.20||Math.abs(ry)>.20)aimAngle=Math.atan2(ry,rx);if(pad.buttons[7]&&pad.buttons[7].value>.25)shooting=true;if(keys.w||keys.arrowup)my-=1;if(keys.s||keys.arrowdown)my+=1;if(keys.a||keys.arrowleft)mx-=1;if(keys.d||keys.arrowright)mx+=1;if(pressed(pad,2)&&!previousButtons[2])reload();if(pressed(pad,4)&&!previousButtons[4])heal();previousButtons=pad.buttons.map(b=>b.pressed)}else{document.getElementById('controller').textContent='Niet verbonden';if(keys.w||keys.arrowup)my-=1;if(keys.s||keys.arrowdown)my+=1;if(keys.a||keys.arrowleft)mx-=1;if(keys.d||keys.arrowright)mx+=1;if(!touchMode||!touchFire)aimAngle=Math.atan2(mouse.y-H/2,mouse.x-W/2)}
+let len=Math.hypot(mx,my)||1;if(len>1){mx/=len;my/=len}player.x+=mx*player.speed*dt;player.y+=my*player.speed*dt;if(shooting)shoot();if(keys.r)reload();if(reloadTimer>0){reloadTimer-=dt/60;if(reloadTimer<=0){player.ammo=player.maxAmmo;reloadTimer=0}}if(healCooldown>0)healCooldown-=dt/60;storm=Math.max(450,storm-0.025*dt);if(Math.hypot(player.x,player.y)>storm){player.hp-=.15*dt;if(player.hp<=0)alive=false}
+for(let b of bots){let dx=player.x-b.x,dy=player.y-b.y,d=Math.hypot(dx,dy)||1;if(d<1200){b.x+=dx/d*b.speed*dt;b.y+=dy/d*b.speed*dt}else{b.x+=Math.sin(performance.now()/1000+b.x)*b.speed*dt*.3;b.y+=Math.cos(performance.now()/1000+b.y)*b.speed*dt*.3}b.cool-=dt;if(d<650&&b.cool<=0){b.cool=rand(45,100);bullets.push({x:b.x,y:b.y,vx:dx/d*7,vy:dy/d*7,life:85,enemy:true})}}
+for(let i=bullets.length-1;i>=0;i--){let b=bullets[i];b.x+=b.vx*dt;b.y+=b.vy*dt;b.life-=dt;if(b.life<=0){bullets.splice(i,1);continue}if(b.enemy){if(Math.hypot(b.x-player.x,b.y-player.y)<22){player.hp-=7;bullets.splice(i,1);if(player.hp<=0)alive=false}}else{let hit=false;for(let j=bots.length-1;j>=0;j--){let bot=bots[j];if(Math.hypot(b.x-bot.x,b.y-b.y)<23){bot.hp-=40;hit=true;if(bot.hp<=0){score++;loot.push({x:bot.x,y:bot.y,type:1});bots.splice(j,1)}break}}if(hit)bullets.splice(i,1)}}
+spawnClock+=dt;if(spawnClock>30){spawnClock=0;while(bots.length<50)bots.push(spawnBot())}for(let i=loot.length-1;i>=0;i--){let l=loot[i];if(Math.hypot(player.x-l.x,player.y-l.y)<35){if(l.type===0)player.hp=Math.min(100,player.hp+25);else player.ammo=Math.min(player.maxAmmo,player.ammo+15);loot.splice(i,1)}}}
+function draw(){ctx.fillStyle='#182b20';ctx.fillRect(0,0,W,H);let cameraX=player.x-W/2,cameraY=player.y-H/2;ctx.save();ctx.translate(-cameraX,-cameraY);ctx.strokeStyle='#294232';ctx.lineWidth=1;let grid=100,sx=Math.floor(cameraX/grid)*grid,sy=Math.floor(cameraY/grid)*grid;ctx.beginPath();for(let x=sx;x<cameraX+W+grid;x+=grid){ctx.moveTo(x,cameraY);ctx.lineTo(x,cameraY+H)}for(let y=sy;y<cameraY+H+grid;y+=grid){ctx.moveTo(cameraX,y);ctx.lineTo(cameraX+W,y)}ctx.stroke();ctx.strokeStyle='#a64cff';ctx.lineWidth=5;ctx.beginPath();ctx.arc(0,0,storm,0,Math.PI*2);ctx.stroke();for(let l of loot){ctx.fillStyle=l.type===0?'#46ff85':'#ffe25c';ctx.fillRect(l.x-9,l.y-9,18,18)}for(let b of bots){ctx.fillStyle='#d94d49';ctx.fillRect(b.x-15,b.y-15,30,30);ctx.fillStyle='#222';ctx.fillRect(b.x-16,b.y-24,32,6);ctx.fillStyle='#5aff75';ctx.fillRect(b.x-16,b.y-24,32*b.hp/100,6)}for(let b of bullets){ctx.fillStyle=b.enemy?'#ff7474':'#fff6a0';ctx.fillRect(b.x-3,b.y-3,6,6)}ctx.fillStyle='#42a5ff';ctx.fillRect(player.x-16,player.y-16,32,32);ctx.strokeStyle='#fff';ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(player.x,player.y);ctx.lineTo(player.x+Math.cos(aimAngle)*40,player.y+Math.sin(aimAngle)*40);ctx.stroke();ctx.restore();document.getElementById('hp').textContent=Math.max(0,Math.ceil(player.hp));document.getElementById('ammo').textContent=player.ammo;document.getElementById('kills').textContent=score;document.getElementById('fps').textContent=fps;document.getElementById('ping').textContent=ping;document.getElementById('botcount').textContent=bots.length;document.getElementById('message').textContent=alive?(reloadTimer>0?'RELOADING':''):'GAME OVER'}
+function loop(now){requestAnimationFrame(loop);let cap=Number(document.getElementById('limit').value),interval=cap>0?1000/cap:0;if(interval>0&&now-lastRender<interval)return;let dt=now-previousTime;previousTime=now;lastRender=now;update(dt);draw();frames++;if(now-fpsClock>=1000){fps=frames;frames=0;fpsClock=now;ping=Math.floor(rand(8,24));}}
+resetGame();requestAnimationFrame(loop);
+</script>
+</body>
+</html>
